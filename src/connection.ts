@@ -26,15 +26,13 @@ export type EdgeSocketConnectorDeps<TResponse extends Record<string, unknown>> =
     passiveOnServerActionRef: Ref<
       ((type: string, data: unknown) => void) | null
     >;
-    activeRequestRef: Ref<
-      {
-        handler: (
-          message: EdgeFunctionRawMessage,
-          ctx: EdgeFunctionMessageContext<TResponse>,
-        ) => void;
-        ctx: EdgeFunctionMessageContext<TResponse>;
-      } | null
-    >;
+    activeRequestRef: Ref<{
+      handler: (
+        message: EdgeFunctionRawMessage,
+        ctx: EdgeFunctionMessageContext<TResponse>,
+      ) => void;
+      ctx: EdgeFunctionMessageContext<TResponse>;
+    } | null>;
     lastWarmupPayloadRef: Ref<unknown>;
     setIsConnected: (connected: boolean) => void;
     closeSocket: () => void;
@@ -89,9 +87,8 @@ export async function connectEdgeSocket<
     const supabaseUrl = getSupabaseUrl();
     if (!supabaseUrl) throw new Error("Missing Supabase URL");
 
-    const wsUrl = supabaseUrl.replace(
-      /^https?:\/\//,
-      (m: string) => m === "https://" ? "wss://" : "ws://",
+    const wsUrl = supabaseUrl.replace(/^https?:\/\//, (m: string) =>
+      m === "https://" ? "wss://" : "ws://",
     );
     const functionUrl = `${wsUrl}/functions/v1/${functionPath}`;
 
@@ -147,9 +144,7 @@ export async function connectEdgeSocket<
       };
 
       const retryConnect = () => {
-        connectEdgeSocket(deps)
-          .then(resolveConnection)
-          .catch(rejectConnection);
+        connectEdgeSocket(deps).then(resolveConnection).catch(rejectConnection);
       };
 
       wsRef.current.onclose = () => {
@@ -158,20 +153,22 @@ export async function connectEdgeSocket<
         setIsConnected(false);
         isWarmupReadyRef.current = false;
 
-        const willRetry = !isExplicitDisconnectRef.current &&
+        const willRetry =
+          !isExplicitDisconnectRef.current &&
           retryCountRef.current < MAX_RETRIES;
-        if (!willRetry) {
+        if (isExplicitDisconnectRef.current) {
+          // Teardown (unmount, abort) — cancel pending warmup without surfacing an error
+          settleWarmupWaiters();
+        } else if (!willRetry) {
           settleWarmupWaiters(new Error("WebSocket closed"));
         }
 
         if (isExplicitDisconnectRef.current) {
-          rejectConnection(
-            new Error("WebSocket closed by server or aborted"),
-          );
+          rejectConnection(new Error("WebSocket closed by server or aborted"));
         } else if (retryCountRef.current < MAX_RETRIES) {
           retryCountRef.current++;
-          const delay = INITIAL_RETRY_DELAY_MS *
-            Math.pow(2, retryCountRef.current - 1);
+          const delay =
+            INITIAL_RETRY_DELAY_MS * Math.pow(2, retryCountRef.current - 1);
           setTimeout(retryConnect, delay);
         } else {
           rejectConnection(
@@ -204,7 +201,8 @@ export async function connectEdgeSocket<
 
           const passive = passiveOnServerActionRef.current;
           if (passive && !activeRequestRef.current) {
-            const isWarmupControl = message.type === "status" &&
+            const isWarmupControl =
+              message.type === "status" &&
               (message.data === "ready" || message.data === "context");
             if (!isWarmupControl) {
               passive(message.type, message.data);
