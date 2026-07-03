@@ -1,0 +1,60 @@
+{
+  "name": "supabase-edge-function-continuous-stream",
+  "version": "1.0.1",
+  "description": "Continuous WebSocket streaming for Supabase edge functions",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/huy9k/supabase-edge-function-continuous-stream.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./react.js",
+      "require": "./dist/react.cjs",
+      "default": "./react.js"
+    }
+  },
+  "files": [
+    "dist",
+    "react.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "prepublishOnly": "npm run build",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "react": "^19",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.4"
+  },
+  "keywords": [
+    "supabase",
+    "edge-functions",
+    "websocket",
+    "streaming",
+    "react"
+  ]
+}
