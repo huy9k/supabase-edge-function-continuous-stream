@@ -51,6 +51,17 @@ export const useEdgeStream = createUseEdgeStream({
 2. `client_warmup` → server responds `status: ready`
 3. `client_message` → streamed events → `complete`
 
+**Thinking stream** (agent liveness UI):
+
+| Event | `data` | Client reducer |
+| ----- | ------ | -------------- |
+| `thinking_paragraph` | string | new paragraph |
+| `thinking_delta` | string | append to current paragraph |
+| `thinking_snapshot` | string | replace full block |
+
+Use `reduceThinking` and `isThinkingEvent` from this package on the client.
+Pair with `createThinkingStream` from `supabase-edge-function-helpers` on the server.
+
 ## License
 
 MIT

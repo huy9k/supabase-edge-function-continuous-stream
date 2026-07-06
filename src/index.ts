@@ -19,6 +19,13 @@ export { connectEdgeSocket } from "./connection";
 
 export { createStandardAiMessageHandler } from "./handler";
 
+export {
+  isThinkingEvent,
+  reduceThinking,
+  THINKING_EVENT_TYPES,
+} from "./thinking";
+export type { ThinkingEventType } from "./thinking";
+
 export type { EdgeWorkerLimits } from "./workerLimits";
 export { DEFAULT_EDGE_WORKER_LIMITS } from "./workerLimits";
 

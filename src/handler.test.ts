@@ -75,9 +75,12 @@ describe("createStandardAiMessageHandler", () => {
     const onServerAction = vi.fn();
     const handler = createStandardAiMessageHandler({}, { onServerAction });
 
-    handler({ type: "thought_delta", data: "thinking..." }, bag.ctx);
+    handler({ type: "thinking_delta", data: "thinking..." }, bag.ctx);
 
-    expect(onServerAction).toHaveBeenCalledWith("thought_delta", "thinking...");
+    expect(onServerAction).toHaveBeenCalledWith(
+      "thinking_delta",
+      "thinking...",
+    );
     expect(bag.resolved).toBeNull();
   });
 });

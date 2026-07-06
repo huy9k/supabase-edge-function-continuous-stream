@@ -1,6 +1,6 @@
 {
   "name": "supabase-edge-function-continuous-stream",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Continuous WebSocket streaming for Supabase edge functions",
   "license": "MIT",
   "repository": {
