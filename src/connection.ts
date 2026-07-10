@@ -3,6 +3,7 @@ import {
   INITIAL_RETRY_DELAY_MS,
   MAX_RETRIES,
 } from "./constants";
+import { STREAM_DISCONNECT_MESSAGE } from "./errors";
 import type {
   EdgeFunctionMessageContext,
   EdgeFunctionRawMessage,
@@ -157,10 +158,14 @@ export async function connectEdgeSocket<
           !isExplicitDisconnectRef.current &&
           retryCountRef.current < MAX_RETRIES;
         if (isExplicitDisconnectRef.current) {
-          // Teardown (unmount, abort) — cancel pending warmup without surfacing an error
           settleWarmupWaiters();
         } else if (!willRetry) {
           settleWarmupWaiters(new Error("WebSocket closed"));
+        }
+
+        const active = activeRequestRef.current;
+        if (active && !active.ctx.isResolved()) {
+          active.ctx.reject(new Error(STREAM_DISCONNECT_MESSAGE));
         }
 
         if (isExplicitDisconnectRef.current) {

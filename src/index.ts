@@ -19,12 +19,18 @@ export { connectEdgeSocket } from "./connection";
 
 export { createStandardAiMessageHandler } from "./handler";
 
+export { isStreamDisconnectError, STREAM_DISCONNECT_MESSAGE } from "./errors";
+
 export {
   isThinkingEvent,
   reduceThinking,
+  reduceThinkingReconnect,
   THINKING_EVENT_TYPES,
 } from "./thinking";
-export type { ThinkingEventType } from "./thinking";
+export type {
+  ReduceThinkingReconnectOptions,
+  ThinkingEventType,
+} from "./thinking";
 
 export type { EdgeWorkerLimits } from "./workerLimits";
 export { DEFAULT_EDGE_WORKER_LIMITS } from "./workerLimits";

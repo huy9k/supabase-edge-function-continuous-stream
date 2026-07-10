@@ -88,21 +88,19 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
       );
     }, []);
 
-    const activeRequestRef = useRef<
-      {
-        payload: TPayload;
-        options: StartStreamOptions<TResponse>;
-        ctx: EdgeFunctionMessageContext<TResponse>;
-        resolve: (val: TResponse) => void;
-        reject: (err: Error) => void;
-        overallTimeout: ReturnType<typeof setTimeout> | null;
-        handler: (
-          message: EdgeFunctionRawMessage,
-          ctx: EdgeFunctionMessageContext<TResponse>,
-        ) => void;
-        sent?: boolean;
-      } | null
-    >(null);
+    const activeRequestRef = useRef<{
+      payload: TPayload;
+      options: StartStreamOptions<TResponse>;
+      ctx: EdgeFunctionMessageContext<TResponse>;
+      resolve: (val: TResponse) => void;
+      reject: (err: Error) => void;
+      overallTimeout: ReturnType<typeof setTimeout> | null;
+      handler: (
+        message: EdgeFunctionRawMessage,
+        ctx: EdgeFunctionMessageContext<TResponse>,
+      ) => void;
+      sent?: boolean;
+    } | null>(null);
 
     useEffect(() => {
       return () => {
@@ -205,6 +203,29 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
       [connectWebSocket, sendWarmupPayload, waitForWarmupReady],
     );
 
+    /** Sends a side-channel control message without disturbing an in-flight send() */
+    const sendControl = useCallback(
+      async (data: Record<string, unknown>) => {
+        await connectWebSocket();
+
+        if (!lastWarmupPayloadRef.current) {
+          throw new Error("Warmup required");
+        }
+
+        if (!isWarmupReadyRef.current) {
+          sendWarmupPayload();
+          await waitForWarmupReady();
+        }
+
+        if (wsRef.current?.readyState !== WebSocket.OPEN) {
+          throw new Error("WebSocket not open");
+        }
+
+        wsRef.current.send(JSON.stringify({ type: "client_control", data }));
+      },
+      [connectWebSocket, sendWarmupPayload, waitForWarmupReady],
+    );
+
     const send = useCallback(
       async (
         payload: TPayload,
@@ -274,7 +295,8 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
             }
           }, overallTimeoutMs);
 
-          const handler = options.onMessage ||
+          const handler =
+            options.onMessage ||
             createStandardAiMessageHandler<TResponse>(options.defaults || {}, {
               onServerAction: options.onServerAction,
               toUserMessage,
@@ -341,6 +363,7 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
     return {
       warmup,
       send,
+      sendControl,
       abort,
       isLoading,
       error,

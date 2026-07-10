@@ -24,10 +24,7 @@ export function createStandardAiMessageHandler<
     message: EdgeFunctionRawMessage,
     ctx: EdgeFunctionMessageContext<T>,
   ) => {
-    if (
-      message.type === "response_text" &&
-      typeof message.data === "string"
-    ) {
+    if (message.type === "response_text" && typeof message.data === "string") {
       (state as { reply?: string }).reply = message.data;
     }
 
@@ -49,11 +46,12 @@ export function createStandardAiMessageHandler<
 
     if (message.type === "complete") {
       ctx.clearOverallTimeout();
-      callbacks?.onServerAction?.("complete", message.data);
 
       if (!ctx.isResolved()) {
         ctx.resolve(buildResponse(message.data as Partial<T>));
       }
+
+      callbacks?.onServerAction?.("complete", message.data);
       return;
     }
 

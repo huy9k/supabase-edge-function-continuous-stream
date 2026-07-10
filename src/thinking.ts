@@ -31,3 +31,30 @@ export function reduceThinking(
 
   return prev;
 }
+
+export type ReduceThinkingReconnectOptions = {
+  isSending?: boolean;
+};
+
+/** Folds thinking events without replacing visible text mid-turn (WS reconnect) */
+export function reduceThinkingReconnect(
+  prev: string,
+  type: string,
+  data: unknown,
+  _options?: ReduceThinkingReconnectOptions,
+): string {
+  if (typeof data !== "string") return prev;
+
+  if (!prev.trim()) {
+    return reduceThinking(prev, type, data);
+  }
+
+  if (type === "thinking_snapshot") {
+    const snapshot = data.trim();
+    if (!snapshot) return prev;
+    if (prev.includes(snapshot)) return prev;
+    return `${prev.trimEnd()}\n\n${data}`;
+  }
+
+  return reduceThinking(prev, type, data);
+}

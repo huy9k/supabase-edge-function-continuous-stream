@@ -45,9 +45,10 @@ describe("createStandardAiMessageHandler", () => {
 
   it("resolves on complete with merged object data", () => {
     const bag = makeCtx<{ reply: string; id: string }>();
-    const handler = createStandardAiMessageHandler<{ reply: string; id: string }>(
-      { reply: "" },
-    );
+    const handler = createStandardAiMessageHandler<{
+      reply: string;
+      id: string;
+    }>({ reply: "" });
 
     handler({ type: "complete", data: { id: "abc", reply: "done" } }, bag.ctx);
 
@@ -82,5 +83,20 @@ describe("createStandardAiMessageHandler", () => {
       "thinking...",
     );
     expect(bag.resolved).toBeNull();
+  });
+
+  it("resolves send before onServerAction on complete", () => {
+    const bag = makeCtx<{ reply: string }>();
+    const onServerAction = vi.fn();
+    const handler = createStandardAiMessageHandler<{ reply: string }>(
+      {},
+      { onServerAction },
+    );
+
+    handler({ type: "complete", data: { reply: "done" } }, bag.ctx);
+
+    expect(bag.resolved).toEqual({ reply: "done" });
+    expect(bag.ctx.isResolved()).toBe(true);
+    expect(onServerAction).toHaveBeenCalledWith("complete", { reply: "done" });
   });
 });
