@@ -1,4 +1,5 @@
 export type {
+  ConnectionState,
   EdgeFunctionMessageContext,
   EdgeFunctionRawMessage,
   EdgeStreamConfig,
@@ -12,6 +13,8 @@ export {
   CONNECTION_TIMEOUT_MS,
   INITIAL_RETRY_DELAY_MS,
   MAX_RETRIES,
+  TOKEN_INITIAL_RETRY_DELAY_MS,
+  TOKEN_MAX_RETRIES,
 } from "./constants";
 
 export type { EdgeSocketConnectorDeps } from "./connection";
@@ -19,7 +22,19 @@ export { connectEdgeSocket } from "./connection";
 
 export { createStandardAiMessageHandler } from "./handler";
 
-export { isStreamDisconnectError, STREAM_DISCONNECT_MESSAGE } from "./errors";
+export {
+  isNetworkError,
+  isRetriableTransportError,
+  isStreamDisconnectError,
+  NETWORK_ERROR_MESSAGE,
+  STREAM_DISCONNECT_MESSAGE,
+} from "./errors";
+
+export { retryOnNetworkError } from "./retryOnNetworkError";
+export type { RetryOnNetworkErrorOptions } from "./retryOnNetworkError";
+
+export { subscribeToBrowserNetwork } from "./browserNetwork";
+export type { BrowserNetworkHandlers } from "./browserNetwork";
 
 export {
   isThinkingEvent,

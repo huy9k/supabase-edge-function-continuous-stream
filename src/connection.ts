@@ -2,9 +2,13 @@ import {
   CONNECTION_TIMEOUT_MS,
   INITIAL_RETRY_DELAY_MS,
   MAX_RETRIES,
+  TOKEN_INITIAL_RETRY_DELAY_MS,
+  TOKEN_MAX_RETRIES,
 } from "./constants";
 import { STREAM_DISCONNECT_MESSAGE } from "./errors";
+import { retryOnNetworkError } from "./retryOnNetworkError";
 import type {
+  ConnectionState,
   EdgeFunctionMessageContext,
   EdgeFunctionRawMessage,
   Ref,
@@ -35,7 +39,7 @@ export type EdgeSocketConnectorDeps<TResponse extends Record<string, unknown>> =
       ctx: EdgeFunctionMessageContext<TResponse>;
     } | null>;
     lastWarmupPayloadRef: Ref<unknown>;
-    setIsConnected: (connected: boolean) => void;
+    setConnectionState: (state: ConnectionState) => void;
     closeSocket: () => void;
     sendWarmupPayload: () => void;
     settleWarmupWaiters: (error?: Error) => void;
@@ -59,7 +63,7 @@ export async function connectEdgeSocket<
     passiveOnServerActionRef,
     activeRequestRef,
     lastWarmupPayloadRef,
-    setIsConnected,
+    setConnectionState,
     closeSocket,
     sendWarmupPayload,
     settleWarmupWaiters,
@@ -82,9 +86,13 @@ export async function connectEdgeSocket<
 
   isConnectingRef.current = true;
   isExplicitDisconnectRef.current = false;
+  setConnectionState("connecting");
 
   try {
-    const accessToken = await getAccessToken();
+    const accessToken = await retryOnNetworkError(() => getAccessToken(), {
+      maxRetries: TOKEN_MAX_RETRIES,
+      initialDelayMs: TOKEN_INITIAL_RETRY_DELAY_MS,
+    });
     const supabaseUrl = getSupabaseUrl();
     if (!supabaseUrl) throw new Error("Missing Supabase URL");
 
@@ -130,7 +138,7 @@ export async function connectEdgeSocket<
         if (connectionTimeout) clearTimeout(connectionTimeout);
         retryCountRef.current = 0;
         isConnectingRef.current = false;
-        setIsConnected(true);
+        setConnectionState("connected");
         socketOpenedAtRef.current = Date.now();
 
         if (lastWarmupPayloadRef.current) {
@@ -151,16 +159,19 @@ export async function connectEdgeSocket<
       wsRef.current.onclose = () => {
         if (connectionTimeout) clearTimeout(connectionTimeout);
         isConnectingRef.current = false;
-        setIsConnected(false);
         isWarmupReadyRef.current = false;
 
         const willRetry =
           !isExplicitDisconnectRef.current &&
           retryCountRef.current < MAX_RETRIES;
         if (isExplicitDisconnectRef.current) {
+          setConnectionState("disconnected");
           settleWarmupWaiters();
         } else if (!willRetry) {
+          setConnectionState("disconnected");
           settleWarmupWaiters(new Error("WebSocket closed"));
+        } else {
+          setConnectionState("reconnecting");
         }
 
         const active = activeRequestRef.current;
@@ -233,6 +244,9 @@ export async function connectEdgeSocket<
     });
   } catch (err) {
     isConnectingRef.current = false;
-    throw err;
+    setConnectionState("disconnected");
+    const error = err instanceof Error ? err : new Error(String(err));
+    settleWarmupWaiters(error);
+    throw error;
   }
 }

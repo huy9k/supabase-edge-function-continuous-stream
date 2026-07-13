@@ -70,13 +70,63 @@ Pair with `createThinkingStream` from `supabase-edge-function-helpers` on the se
 On `complete`, the standard handler **resolves `send()` before `onServerAction`**.
 Consumers can tear down sockets or unmount UI in `onServerAction` without racing the send promise.
 
+## Retriable transport errors
+
+```ts
+import {
+  isRetriableTransportError,
+  isStreamDisconnectError,
+  isNetworkError,
+} from "supabase-edge-function-continuous-stream";
+```
+
+| Helper | Use when |
+| ------ | -------- |
+| `isRetriableTransportError(error)` | **Recommended** — suppress rollback/toast for transient connectivity (fetch failures + socket drops) |
+| `isStreamDisconnectError(error)` | Socket closed mid-stream after a send started |
+| `isNetworkError(error)` | `Failed to fetch` / network errors before the socket opens |
+
+Auth errors (`Not authenticated`, `Unauthorized`) are never classified as retriable.
+
+`getAccessToken` is retried automatically on network errors before opening the WebSocket (`TOKEN_MAX_RETRIES`, exponential backoff).
+
+## Connection state
+
+The hook exposes:
+
+- `connectionState`: `"disconnected" | "connecting" | "connected" | "reconnecting"`
+- `isConnected`: `connectionState === "connected"`
+- `isReconnecting`: `connectionState === "reconnecting"`
+
+Optional factory options:
+
+```ts
+createUseEdgeStream({
+  // ...
+  reconnectOnBrowserOnline: true,
+  onConnectionStateChange: (state) => { /* ... */ },
+});
+```
+
+`reconnectOnBrowserOnline` proactively reconnects when the browser fires `online` and a warmup payload is cached.
+
+`subscribeToBrowserNetwork` is also exported for custom offline/online UI (no toasts in this package).
+
+## Recovery checklist
+
+1. Call `warmup()` once per mounted session (stable `useEffect` deps).
+2. Do not call `abort()` for network blips — it disables auto-retry.
+3. Use `isRetriableTransportError` in send error handlers before rolling back optimistic UI.
+4. Enable `reconnectOnBrowserOnline: true` when the app should reconnect immediately on `online`.
+5. Use `reduceThinkingReconnect` / `reduceResponseText` in `onServerAction` for replay after reconnect.
+
 ## Disconnect errors
 
 ```ts
 import { isStreamDisconnectError } from "supabase-edge-function-continuous-stream";
 ```
 
-Use `isStreamDisconnectError(error)` when ignoring benign closes after a turn already finished server-side.
+Prefer `isRetriableTransportError` for new code. Use `isStreamDisconnectError` alone when you only want to ignore socket teardown after a turn already finished server-side.
 
 ## Warmup stability
 

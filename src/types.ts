@@ -1,3 +1,9 @@
+export type ConnectionState =
+  | "disconnected"
+  | "connecting"
+  | "connected"
+  | "reconnecting";
+
 export type EdgeFunctionRawMessage = Record<string, unknown> & { type: string };
 
 export interface EdgeFunctionMessageContext<

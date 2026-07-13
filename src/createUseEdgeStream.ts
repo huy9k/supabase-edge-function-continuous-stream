@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { subscribeToBrowserNetwork } from "./browserNetwork";
 import { connectEdgeSocket } from "./connection";
 import { createStandardAiMessageHandler } from "./handler";
+import { isRetriableTransportError } from "./errors";
 import type {
+  ConnectionState,
   EdgeFunctionMessageContext,
   EdgeFunctionRawMessage,
   EdgeStreamConfig,
@@ -18,6 +21,8 @@ export type EdgeStreamCoreDeps = {
   invalidateTags?: (
     tags: Array<string | { type: string; id?: string | number }>,
   ) => void;
+  onConnectionStateChange?: (state: ConnectionState) => void;
+  reconnectOnBrowserOnline?: boolean;
 };
 
 /** Factory for a WebSocket streaming hook wired to a host app */
@@ -28,6 +33,8 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
     workerLimits,
     toUserMessage,
     invalidateTags,
+    onConnectionStateChange,
+    reconnectOnBrowserOnline = false,
   } = deps;
 
   const { edgeWorkerTtlMs, edgeRotateThresholdMs, overallTimeoutMs } =
@@ -44,7 +51,8 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
     const wsRef = useRef<WebSocket | null>(null);
     const isExplicitDisconnectRef = useRef(false);
 
-    const [isConnected, setIsConnected] = useState(false);
+    const [connectionState, setConnectionStateInternal] =
+      useState<ConnectionState>("disconnected");
     const isConnectingRef = useRef(false);
     const lastWarmupPayloadRef = useRef<TPayload | null>(null);
     const isWarmupReadyRef = useRef(false);
@@ -56,6 +64,13 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
       ((type: string, data: unknown) => void) | null
     >(null);
     const socketOpenedAtRef = useRef<number | null>(null);
+    const onConnectionStateChangeRef = useRef(onConnectionStateChange);
+    onConnectionStateChangeRef.current = onConnectionStateChange;
+
+    const setConnectionState = useCallback((state: ConnectionState) => {
+      setConnectionStateInternal(state);
+      onConnectionStateChangeRef.current?.(state);
+    }, []);
 
     const settleWarmupWaiters = useCallback((warmupError?: Error) => {
       const waiters = warmupWaitersRef.current;
@@ -154,7 +169,7 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
           passiveOnServerActionRef,
           activeRequestRef,
           lastWarmupPayloadRef,
-          setIsConnected,
+          setConnectionState,
           closeSocket,
           sendWarmupPayload,
           settleWarmupWaiters,
@@ -164,8 +179,30 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
         closeSocket,
         sendWarmupPayload,
         settleWarmupWaiters,
+        setConnectionState,
       ],
     );
+
+    const connectWebSocketRef = useRef(connectWebSocket);
+    connectWebSocketRef.current = connectWebSocket;
+
+    useEffect(() => {
+      if (!reconnectOnBrowserOnline) return;
+
+      return subscribeToBrowserNetwork({
+        onOnline: () => {
+          if (isExplicitDisconnectRef.current) return;
+          if (!lastWarmupPayloadRef.current) return;
+          if (wsRef.current?.readyState === WebSocket.OPEN) return;
+
+          void connectWebSocketRef.current().catch((err) => {
+            if (!isRetriableTransportError(err)) {
+              console.error("Edge stream reconnect on online failed:", err);
+            }
+          });
+        },
+      });
+    }, [reconnectOnBrowserOnline]);
 
     const rotateConnectionIfNeeded = useCallback(
       async (getExpiresAt?: () => number | null) => {
@@ -360,6 +397,9 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
       ],
     );
 
+    const isConnected = connectionState === "connected";
+    const isReconnecting = connectionState === "reconnecting";
+
     return {
       warmup,
       send,
@@ -369,6 +409,8 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
       error,
       data,
       isConnected,
+      connectionState,
+      isReconnecting,
     };
   };
 }
