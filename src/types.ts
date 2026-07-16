@@ -18,6 +18,8 @@ export interface EdgeFunctionMessageContext<
 
 export type EdgeStreamConfig = {
   functionPath: string;
+  /** When true, overlapping send() calls demux by requestId on the wire */
+  concurrent?: boolean;
 };
 
 /** Callbacks a caller can wire up for side-effects during streaming. */

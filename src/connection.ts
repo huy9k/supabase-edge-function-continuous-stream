@@ -6,17 +6,19 @@ import {
   TOKEN_MAX_RETRIES,
 } from "./constants";
 import { STREAM_DISCONNECT_MESSAGE } from "./errors";
+import {
+  pickPendingRequest,
+  readMessageRequestId,
+  shouldDeliverPassive,
+  type PendingRequest,
+} from "./pendingRequest";
 import { retryOnNetworkError } from "./retryOnNetworkError";
-import type {
-  ConnectionState,
-  EdgeFunctionMessageContext,
-  EdgeFunctionRawMessage,
-  Ref,
-} from "./types";
+import type { ConnectionState, EdgeFunctionRawMessage, Ref } from "./types";
 
 export type EdgeSocketConnectorDeps<TResponse extends Record<string, unknown>> =
   {
     functionPath: string;
+    concurrent: boolean;
     getAccessToken: () => Promise<string>;
     getSupabaseUrl: () => string;
     wsRef: Ref<WebSocket | null>;
@@ -31,13 +33,10 @@ export type EdgeSocketConnectorDeps<TResponse extends Record<string, unknown>> =
     passiveOnServerActionRef: Ref<
       ((type: string, data: unknown) => void) | null
     >;
-    activeRequestRef: Ref<{
-      handler: (
-        message: EdgeFunctionRawMessage,
-        ctx: EdgeFunctionMessageContext<TResponse>,
-      ) => void;
-      ctx: EdgeFunctionMessageContext<TResponse>;
-    } | null>;
+    /** Single-flight slot (used when concurrent is false) */
+    activeRequestRef: Ref<PendingRequest<TResponse> | null>;
+    /** Concurrent pending map (used when concurrent is true) */
+    pendingRequestsRef: Ref<Map<string, PendingRequest<TResponse>>>;
     lastWarmupPayloadRef: Ref<unknown>;
     setConnectionState: (state: ConnectionState) => void;
     closeSocket: () => void;
@@ -45,12 +44,34 @@ export type EdgeSocketConnectorDeps<TResponse extends Record<string, unknown>> =
     settleWarmupWaiters: (error?: Error) => void;
   };
 
+/** Rejects every in-flight request on disconnect */
+function rejectAllPending<TResponse extends Record<string, unknown>>(
+  concurrent: boolean,
+  activeRequestRef: Ref<PendingRequest<TResponse> | null>,
+  pendingRequestsRef: Ref<Map<string, PendingRequest<TResponse>>>,
+  err: Error,
+): void {
+  if (concurrent) {
+    const pending = [...pendingRequestsRef.current.values()];
+    pendingRequestsRef.current.clear();
+    for (const entry of pending) {
+      if (!entry.ctx.isResolved()) entry.ctx.reject(err);
+    }
+    return;
+  }
+  const active = activeRequestRef.current;
+  if (active && !active.ctx.isResolved()) {
+    active.ctx.reject(err);
+  }
+}
+
 /** Opens or reuses a WebSocket to a Supabase edge function */
 export async function connectEdgeSocket<
   TResponse extends Record<string, unknown>,
 >(deps: EdgeSocketConnectorDeps<TResponse>): Promise<void> {
   const {
     functionPath,
+    concurrent,
     getAccessToken,
     getSupabaseUrl,
     wsRef,
@@ -62,6 +83,7 @@ export async function connectEdgeSocket<
     warmupWaitersRef,
     passiveOnServerActionRef,
     activeRequestRef,
+    pendingRequestsRef,
     lastWarmupPayloadRef,
     setConnectionState,
     closeSocket,
@@ -174,9 +196,14 @@ export async function connectEdgeSocket<
           setConnectionState("reconnecting");
         }
 
-        const active = activeRequestRef.current;
-        if (active && !active.ctx.isResolved()) {
-          active.ctx.reject(new Error(STREAM_DISCONNECT_MESSAGE));
+        rejectAllPending(
+          concurrent,
+          activeRequestRef,
+          pendingRequestsRef,
+          new Error(STREAM_DISCONNECT_MESSAGE),
+        );
+        if (!concurrent) {
+          activeRequestRef.current = null;
         }
 
         if (isExplicitDisconnectRef.current) {
@@ -215,8 +242,21 @@ export async function connectEdgeSocket<
             );
           }
 
+          const pending = pickPendingRequest(message, {
+            concurrent,
+            activeRequest: activeRequestRef.current,
+            pendingById: pendingRequestsRef.current,
+          });
+
           const passive = passiveOnServerActionRef.current;
-          if (passive && !activeRequestRef.current) {
+          if (
+            passive &&
+            shouldDeliverPassive({
+              concurrent,
+              messageHasRequestId: readMessageRequestId(message) !== undefined,
+              hasActiveRequest: activeRequestRef.current !== null,
+            })
+          ) {
             const isWarmupControl =
               message.type === "status" &&
               (message.data === "ready" || message.data === "context");
@@ -225,20 +265,28 @@ export async function connectEdgeSocket<
             }
           }
 
-          if (!activeRequestRef.current) return;
+          if (!pending) return;
 
-          const { ctx, handler } = activeRequestRef.current;
+          const { ctx, handler } = pending;
           handler(message, ctx);
         } catch (error) {
-          if (!activeRequestRef.current) return;
-          const ctx = activeRequestRef.current.ctx;
-          ctx.reject(
-            new Error(
-              `Failed to parse WebSocket message: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            ),
+          const parseErr = new Error(
+            `Failed to parse WebSocket message: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
           );
+          if (concurrent) {
+            // Cannot attribute parse failure to a request — reject all
+            rejectAllPending(
+              concurrent,
+              activeRequestRef,
+              pendingRequestsRef,
+              parseErr,
+            );
+            return;
+          }
+          if (!activeRequestRef.current) return;
+          activeRequestRef.current.ctx.reject(parseErr);
         }
       };
     });

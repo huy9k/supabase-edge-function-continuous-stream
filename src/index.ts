@@ -20,6 +20,13 @@ export {
 export type { EdgeSocketConnectorDeps } from "./connection";
 export { connectEdgeSocket } from "./connection";
 
+export type { PendingRequest } from "./pendingRequest";
+export {
+  pickPendingRequest,
+  readMessageRequestId,
+  shouldDeliverPassive,
+} from "./pendingRequest";
+
 export { createStandardAiMessageHandler } from "./handler";
 
 export {

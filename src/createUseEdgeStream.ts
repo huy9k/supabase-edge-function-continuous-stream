@@ -3,6 +3,7 @@ import { subscribeToBrowserNetwork } from "./browserNetwork";
 import { connectEdgeSocket } from "./connection";
 import { createStandardAiMessageHandler } from "./handler";
 import { isRetriableTransportError } from "./errors";
+import type { PendingRequest } from "./pendingRequest";
 import type {
   ConnectionState,
   EdgeFunctionMessageContext,
@@ -25,6 +26,17 @@ export type EdgeStreamCoreDeps = {
   reconnectOnBrowserOnline?: boolean;
 };
 
+type TrackedRequest<
+  TPayload,
+  TResponse extends Record<string, unknown>,
+> = PendingRequest<TResponse> & {
+  payload: TPayload;
+  options: StartStreamOptions<TResponse>;
+  resolve: (val: TResponse) => void;
+  reject: (err: Error) => void;
+  overallTimeout: ReturnType<typeof setTimeout> | null;
+};
+
 /** Factory for a WebSocket streaming hook wired to a host app */
 export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
   const {
@@ -44,6 +56,8 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
     TPayload,
     TResponse extends Record<string, unknown>,
   >(config: EdgeStreamConfig) {
+    const concurrent = config.concurrent === true;
+
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<Error | null>(null);
     const [data, setData] = useState<TResponse | undefined>(undefined);
@@ -67,9 +81,21 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
     const onConnectionStateChangeRef = useRef(onConnectionStateChange);
     onConnectionStateChangeRef.current = onConnectionStateChange;
 
+    const activeRequestRef = useRef<TrackedRequest<TPayload, TResponse> | null>(
+      null,
+    );
+    const pendingRequestsRef = useRef(
+      new Map<string, TrackedRequest<TPayload, TResponse>>(),
+    );
+    const pendingCountRef = useRef(0);
+
     const setConnectionState = useCallback((state: ConnectionState) => {
       setConnectionStateInternal(state);
       onConnectionStateChangeRef.current?.(state);
+    }, []);
+
+    const syncLoading = useCallback(() => {
+      setIsLoading(pendingCountRef.current > 0);
     }, []);
 
     const settleWarmupWaiters = useCallback((warmupError?: Error) => {
@@ -103,20 +129,6 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
       );
     }, []);
 
-    const activeRequestRef = useRef<{
-      payload: TPayload;
-      options: StartStreamOptions<TResponse>;
-      ctx: EdgeFunctionMessageContext<TResponse>;
-      resolve: (val: TResponse) => void;
-      reject: (err: Error) => void;
-      overallTimeout: ReturnType<typeof setTimeout> | null;
-      handler: (
-        message: EdgeFunctionRawMessage,
-        ctx: EdgeFunctionMessageContext<TResponse>,
-      ) => void;
-      sent?: boolean;
-    } | null>(null);
-
     useEffect(() => {
       return () => {
         isExplicitDisconnectRef.current = true;
@@ -140,23 +152,51 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
       socketOpenedAtRef.current = null;
     }, []);
 
+    const clearTrackedRequest = useCallback(
+      (entry: TrackedRequest<TPayload, TResponse>) => {
+        if (entry.overallTimeout) {
+          clearTimeout(entry.overallTimeout);
+          entry.overallTimeout = null;
+        }
+        let removed = false;
+        if (concurrent && entry.requestId) {
+          removed = pendingRequestsRef.current.delete(entry.requestId);
+        } else if (activeRequestRef.current === entry) {
+          activeRequestRef.current = null;
+          removed = true;
+        }
+        if (removed) {
+          pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+          syncLoading();
+        }
+      },
+      [concurrent, syncLoading],
+    );
+
     const abort = useCallback(() => {
       isExplicitDisconnectRef.current = true;
       closeSocket();
-      setIsLoading(false);
-      if (activeRequestRef.current) {
-        activeRequestRef.current.reject(new Error("Request aborted"));
-        if (activeRequestRef.current.overallTimeout) {
-          clearTimeout(activeRequestRef.current.overallTimeout);
+      if (concurrent) {
+        for (const entry of pendingRequestsRef.current.values()) {
+          if (entry.overallTimeout) clearTimeout(entry.overallTimeout);
+          entry.reject(new Error("Request aborted"));
         }
+        pendingRequestsRef.current.clear();
+      } else if (activeRequestRef.current) {
+        const entry = activeRequestRef.current;
+        if (entry.overallTimeout) clearTimeout(entry.overallTimeout);
+        entry.reject(new Error("Request aborted"));
         activeRequestRef.current = null;
       }
-    }, [closeSocket]);
+      pendingCountRef.current = 0;
+      setIsLoading(false);
+    }, [closeSocket, concurrent]);
 
     const connectWebSocket = useCallback(
       () =>
         connectEdgeSocket<TResponse>({
           functionPath: config.functionPath,
+          concurrent,
           getAccessToken,
           getSupabaseUrl,
           wsRef,
@@ -167,7 +207,12 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
           isWarmupReadyRef,
           warmupWaitersRef,
           passiveOnServerActionRef,
-          activeRequestRef,
+          activeRequestRef: activeRequestRef as {
+            current: PendingRequest<TResponse> | null;
+          },
+          pendingRequestsRef: pendingRequestsRef as {
+            current: Map<string, PendingRequest<TResponse>>;
+          },
           lastWarmupPayloadRef,
           setConnectionState,
           closeSocket,
@@ -176,6 +221,7 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
         }),
       [
         config.functionPath,
+        concurrent,
         closeSocket,
         sendWarmupPayload,
         settleWarmupWaiters,
@@ -268,69 +314,102 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
         payload: TPayload,
         options: StartStreamOptions<TResponse>,
       ): Promise<TResponse> => {
-        if (!isLoading) {
+        if (pendingCountRef.current === 0) {
           await rotateConnectionIfNeeded(options.getWorkerExpiresAt);
         }
 
-        setIsLoading(true);
         setError(null);
         setData(undefined);
         isExplicitDisconnectRef.current = false;
 
+        const requestId = concurrent ? crypto.randomUUID() : undefined;
         let resolved = false;
-
-        const ctx: EdgeFunctionMessageContext<TResponse> = {
-          resolve: (value) => {
-            resolved = true;
-            setData(value);
-            setIsLoading(false);
-            if (options.invalidateTags && invalidateTags) {
-              const shouldInvalidate = options.invalidateTags.condition
-                ? options.invalidateTags.condition(value)
-                : true;
-              if (shouldInvalidate) {
-                invalidateTags(options.invalidateTags.tags);
-              }
-            }
-            if (activeRequestRef.current?.overallTimeout) {
-              clearTimeout(activeRequestRef.current.overallTimeout);
-            }
-            if (activeRequestRef.current?.resolve) {
-              activeRequestRef.current.resolve(value);
-            }
-            activeRequestRef.current = null;
-          },
-          reject: (err) => {
-            resolved = true;
-            setError(err);
-            setIsLoading(false);
-            if (activeRequestRef.current?.overallTimeout) {
-              clearTimeout(activeRequestRef.current.overallTimeout);
-            }
-            if (activeRequestRef.current?.reject) {
-              activeRequestRef.current.reject(err);
-            }
-            activeRequestRef.current = null;
-          },
-          closeSocket,
-          clearOverallTimeout: () => {
-            if (activeRequestRef.current?.overallTimeout) {
-              clearTimeout(activeRequestRef.current.overallTimeout);
-            }
-          },
-          isResolved: () => resolved,
-        };
 
         return new Promise<TResponse>((resolvePromise, rejectPromise) => {
           const overallTimeout = setTimeout(() => {
             if (!resolved) {
               const err = new Error("WebSocket request timeout");
               setError(err);
-              setIsLoading(false);
+              const entry = concurrent
+                ? requestId
+                  ? pendingRequestsRef.current.get(requestId)
+                  : undefined
+                : activeRequestRef.current;
+              if (entry) clearTrackedRequest(entry);
+              else {
+                pendingCountRef.current = Math.max(
+                  0,
+                  pendingCountRef.current - 1,
+                );
+                syncLoading();
+              }
               rejectPromise(err);
-              activeRequestRef.current = null;
             }
           }, overallTimeoutMs);
+
+          const ctx: EdgeFunctionMessageContext<TResponse> = {
+            resolve: (value) => {
+              resolved = true;
+              clearTimeout(overallTimeout);
+              setData(value);
+              if (options.invalidateTags && invalidateTags) {
+                const shouldInvalidate = options.invalidateTags.condition
+                  ? options.invalidateTags.condition(value)
+                  : true;
+                if (shouldInvalidate) {
+                  invalidateTags(options.invalidateTags.tags);
+                }
+              }
+              const entry = concurrent
+                ? requestId
+                  ? pendingRequestsRef.current.get(requestId)
+                  : undefined
+                : activeRequestRef.current;
+              if (entry) {
+                entry.resolve(value);
+                clearTrackedRequest(entry);
+              } else {
+                resolvePromise(value);
+                pendingCountRef.current = Math.max(
+                  0,
+                  pendingCountRef.current - 1,
+                );
+                syncLoading();
+              }
+            },
+            reject: (err) => {
+              resolved = true;
+              clearTimeout(overallTimeout);
+              setError(err);
+              const entry = concurrent
+                ? requestId
+                  ? pendingRequestsRef.current.get(requestId)
+                  : undefined
+                : activeRequestRef.current;
+              if (entry) {
+                entry.reject(err);
+                clearTrackedRequest(entry);
+              } else {
+                rejectPromise(err);
+                pendingCountRef.current = Math.max(
+                  0,
+                  pendingCountRef.current - 1,
+                );
+                syncLoading();
+              }
+            },
+            closeSocket,
+            clearOverallTimeout: () => {
+              clearTimeout(overallTimeout);
+              const entry = concurrent
+                ? requestId
+                  ? pendingRequestsRef.current.get(requestId)
+                  : undefined
+                : activeRequestRef.current;
+              if (entry) entry.overallTimeout = null;
+            },
+            isResolved: () => resolved,
+          };
 
           const handler =
             options.onMessage ||
@@ -339,7 +418,8 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
               toUserMessage,
             });
 
-          activeRequestRef.current = {
+          const entry: TrackedRequest<TPayload, TResponse> = {
+            requestId,
             payload,
             options,
             ctx,
@@ -349,11 +429,25 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
             handler,
           };
 
+          pendingCountRef.current += 1;
+          syncLoading();
+
+          if (concurrent && requestId) {
+            pendingRequestsRef.current.set(requestId, entry);
+          } else {
+            activeRequestRef.current = entry;
+          }
+
           connectWebSocket()
             .then(async () => {
-              if (!activeRequestRef.current || activeRequestRef.current.sent) {
-                return;
-              }
+              // Look up THIS request — never the "current" slot
+              const current = concurrent
+                ? requestId
+                  ? pendingRequestsRef.current.get(requestId)
+                  : undefined
+                : activeRequestRef.current;
+
+              if (!current || current.sent) return;
 
               if (!lastWarmupPayloadRef.current) {
                 throw new Error("Warmup required");
@@ -364,36 +458,63 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
                 await waitForWarmupReady();
               }
 
+              const stillCurrent = concurrent
+                ? requestId
+                  ? pendingRequestsRef.current.get(requestId)
+                  : undefined
+                : activeRequestRef.current;
+
               if (
                 wsRef.current?.readyState === WebSocket.OPEN &&
-                activeRequestRef.current &&
-                !activeRequestRef.current.sent
+                stillCurrent &&
+                !stillCurrent.sent
               ) {
-                activeRequestRef.current.sent = true;
-                wsRef.current.send(
-                  JSON.stringify({ type: "client_message", data: payload }),
-                );
+                stillCurrent.sent = true;
+                const envelope =
+                  concurrent && requestId
+                    ? {
+                        type: "client_message",
+                        requestId,
+                        data: payload,
+                      }
+                    : { type: "client_message", data: payload };
+                wsRef.current.send(JSON.stringify(envelope));
               }
             })
             .catch((err) => {
-              clearTimeout(overallTimeout);
-              setError(err);
-              setIsLoading(false);
-              rejectPromise(err);
-              activeRequestRef.current = null;
+              const failed = concurrent
+                ? requestId
+                  ? pendingRequestsRef.current.get(requestId)
+                  : undefined
+                : activeRequestRef.current;
+              if (failed) {
+                failed.reject(err);
+                clearTrackedRequest(failed);
+              } else {
+                clearTimeout(overallTimeout);
+                setError(err);
+                pendingCountRef.current = Math.max(
+                  0,
+                  pendingCountRef.current - 1,
+                );
+                syncLoading();
+                rejectPromise(err);
+              }
             });
         });
       },
       [
+        concurrent,
         connectWebSocket,
         closeSocket,
         sendWarmupPayload,
         waitForWarmupReady,
         rotateConnectionIfNeeded,
-        isLoading,
         overallTimeoutMs,
         toUserMessage,
         invalidateTags,
+        clearTrackedRequest,
+        syncLoading,
       ],
     );
 
