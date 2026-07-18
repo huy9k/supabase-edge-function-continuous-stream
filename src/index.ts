@@ -57,7 +57,11 @@ export type {
 export type { EdgeWorkerLimits } from "./workerLimits";
 export { DEFAULT_EDGE_WORKER_LIMITS } from "./workerLimits";
 
-export type { EdgeStreamCoreDeps } from "./createUseEdgeStream";
+export type {
+  EdgeStreamClient,
+  EdgeStreamCoreDeps,
+} from "./createEdgeStreamClient";
+export { createEdgeStreamClient } from "./createEdgeStreamClient";
 export { createUseEdgeStream } from "./createUseEdgeStream";
 
 export {

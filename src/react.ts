@@ -1,4 +1,8 @@
-export type { EdgeStreamCoreDeps } from "./createUseEdgeStream";
+export type {
+  EdgeStreamClient,
+  EdgeStreamCoreDeps,
+} from "./createEdgeStreamClient";
+export { createEdgeStreamClient } from "./createEdgeStreamClient";
 export { createUseEdgeStream } from "./createUseEdgeStream";
 
 export type {

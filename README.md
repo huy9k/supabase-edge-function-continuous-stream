@@ -12,10 +12,44 @@ npm install supabase-edge-function-continuous-stream
 
 ## Entries
 
-| Import                                           | React required? | Use for                                                      |
-| ------------------------------------------------ | --------------- | ------------------------------------------------------------ |
-| `supabase-edge-function-continuous-stream`       | No              | `connectEdgeSocket`, `createStandardAiMessageHandler`, types |
-| `supabase-edge-function-continuous-stream/react` | Yes             | `createUseEdgeStream` hook factory                           |
+| Import                                           | React required? | Use for                                                                 |
+| ------------------------------------------------ | --------------- | ----------------------------------------------------------------------- |
+| `supabase-edge-function-continuous-stream`       | No              | `createEdgeStreamClient`, `connectEdgeSocket`, handlers, types          |
+| `supabase-edge-function-continuous-stream/react` | Yes             | `createUseEdgeStream` hook factory (thin wrapper over the client)       |
+
+## Non-React client
+
+Use `createEdgeStreamClient` from RTK `queryFn`s, Node scripts, or any non-hook caller. Same wire protocol and lifecycle as the React hook (`warmup` / `send` / `sendControl` / `abort`).
+
+```ts
+import {
+  createEdgeStreamClient,
+  DEFAULT_EDGE_WORKER_LIMITS,
+} from "supabase-edge-function-continuous-stream";
+
+const createClient = createEdgeStreamClient({
+  getAccessToken: async () => { /* ... */ },
+  getSupabaseUrl: () => process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  workerLimits: DEFAULT_EDGE_WORKER_LIMITS,
+  reconnectOnBrowserOnline: true,
+});
+
+const stream = createClient({
+  functionPath: "github-manager",
+  concurrent: true,
+});
+
+await stream.warmup({ action: "warmup" });
+await stream.send({ action: "list-tree", /* ... */ }, {
+  onServerAction: (type, data) => { /* ... */ },
+});
+
+// Tear down when leaving the feature surface
+stream.abort();
+stream.dispose();
+```
+
+`createUseEdgeStream` is a thin React wrapper over this client (preserves the existing hook return shape).
 
 ## React usage
 
