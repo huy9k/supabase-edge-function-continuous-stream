@@ -164,11 +164,22 @@ export function createEdgeStreamClient(deps: EdgeStreamCoreDeps): CreateClient {
       );
     }
 
-    /** Best-effort socket close */
+    /**
+     * Best-effort socket close. Detaches handlers first so this socket's own
+     * (possibly-delayed) close event can never fire our reconnect/reject
+     * logic again — without this, a deliberate reconnect() races its own
+     * explicit connectWebSocket() against the stale socket's onclose handler
+     * scheduling a second, uncoordinated retry.
+     */
     function closeSocket() {
       if (!wsRef.current) return;
+      const stale = wsRef.current;
+      stale.onopen = null;
+      stale.onmessage = null;
+      stale.onerror = null;
+      stale.onclose = null;
       try {
-        wsRef.current.close();
+        stale.close();
       } catch {
         // Best-effort close
       }

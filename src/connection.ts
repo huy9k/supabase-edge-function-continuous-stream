@@ -196,14 +196,23 @@ export async function connectEdgeSocket<
           setConnectionState("reconnecting");
         }
 
-        rejectAllPending(
-          concurrent,
-          activeRequestRef,
-          pendingRequestsRef,
-          new Error(STREAM_DISCONNECT_MESSAGE),
-        );
-        if (!concurrent) {
-          activeRequestRef.current = null;
+        // Only tear down in-flight requests when we're truly giving up.
+        // A transient close-that-auto-retries must stay invisible to the
+        // caller: for resumable server-side turns, the eventual "complete"
+        // arrives on the NEW socket and still resolves this same pending
+        // request (activeRequestRef/pendingRequestsRef survive reconnects).
+        // Rejecting on every blip broke seamless resume — every reconnect
+        // surfaced a "WebSocket closed" toast even when the turn kept going.
+        if (!willRetry) {
+          rejectAllPending(
+            concurrent,
+            activeRequestRef,
+            pendingRequestsRef,
+            new Error(STREAM_DISCONNECT_MESSAGE),
+          );
+          if (!concurrent) {
+            activeRequestRef.current = null;
+          }
         }
 
         if (isExplicitDisconnectRef.current) {
