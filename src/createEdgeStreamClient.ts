@@ -8,6 +8,7 @@ import type {
   EdgeFunctionMessageContext,
   EdgeStreamConfig,
   Ref,
+  SendControlOptions,
   StartStreamOptions,
   WarmupOptions,
 } from "./types";
@@ -45,7 +46,14 @@ export type EdgeStreamClient<
     payload: TPayload,
     options: StartStreamOptions<TResponse>,
   ) => Promise<TResponse>;
-  sendControl: (data: Record<string, unknown>) => Promise<void>;
+  sendControl: (
+    data: Record<string, unknown>,
+    options?: SendControlOptions<TPayload>,
+  ) => Promise<void>;
+  /** Registers a fallback warmup payload resolver for sendControl auto-warm */
+  setWarmupPayloadProvider: (
+    provider: (() => TPayload | null) | null,
+  ) => void;
   abort: () => void;
   getConnectionState: () => ConnectionState;
   subscribeConnectionState: (
@@ -88,6 +96,9 @@ export function createEdgeStreamClient(deps: EdgeStreamCoreDeps): CreateClient {
     const isExplicitDisconnectRef: Ref<boolean> = { current: false };
     const isConnectingRef: Ref<boolean> = { current: false };
     const lastWarmupPayloadRef: Ref<TPayload | null> = { current: null };
+    const warmupPayloadProviderRef: Ref<(() => TPayload | null) | null> = {
+      current: null,
+    };
     const isWarmupReadyRef: Ref<boolean> = { current: false };
     const warmupWaitersRef: Ref<
       Array<{ resolve: () => void; reject: (err: Error) => void }>
@@ -266,7 +277,21 @@ export function createEdgeStreamClient(deps: EdgeStreamCoreDeps): CreateClient {
     }
 
     /** Sends a side-channel control message without disturbing an in-flight send() */
-    async function sendControl(data: Record<string, unknown>) {
+    async function sendControl(
+      data: Record<string, unknown>,
+      options?: SendControlOptions<TPayload>,
+    ) {
+      // Prefer explicit payload, then last warmup, then registered provider
+      if (options?.warmupPayload !== undefined) {
+        lastWarmupPayloadRef.current = options.warmupPayload;
+      } else if (
+        !lastWarmupPayloadRef.current &&
+        warmupPayloadProviderRef.current
+      ) {
+        const resolved = warmupPayloadProviderRef.current();
+        if (resolved) lastWarmupPayloadRef.current = resolved;
+      }
+
       await connectWebSocket();
 
       if (!lastWarmupPayloadRef.current) {
@@ -283,6 +308,13 @@ export function createEdgeStreamClient(deps: EdgeStreamCoreDeps): CreateClient {
       }
 
       wsRef.current.send(JSON.stringify({ type: "client_control", data }));
+    }
+
+    /** Registers a fallback warmup payload used by sendControl when none is cached */
+    function setWarmupPayloadProvider(
+      provider: (() => TPayload | null) | null,
+    ) {
+      warmupPayloadProviderRef.current = provider;
     }
 
     /** Sends a client_message and resolves on complete */
@@ -506,6 +538,7 @@ export function createEdgeStreamClient(deps: EdgeStreamCoreDeps): CreateClient {
       warmup,
       send,
       sendControl,
+      setWarmupPayloadProvider,
       abort,
       getConnectionState: () => connectionState,
       subscribeConnectionState: (listener) => {

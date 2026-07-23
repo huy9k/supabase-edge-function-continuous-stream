@@ -4,6 +4,7 @@ export type {
   EdgeFunctionRawMessage,
   EdgeStreamConfig,
   Ref,
+  SendControlOptions,
   StandardAiCallbacks,
   StartStreamOptions,
   WarmupOptions,

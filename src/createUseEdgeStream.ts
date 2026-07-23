@@ -7,6 +7,7 @@ import {
 import type {
   ConnectionState,
   EdgeStreamConfig,
+  SendControlOptions,
   StartStreamOptions,
   WarmupOptions,
 } from "./types";
@@ -58,8 +59,16 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
     );
 
     const sendControl = useCallback(
-      (controlData: Record<string, unknown>) =>
-        client.sendControl(controlData),
+      (
+        controlData: Record<string, unknown>,
+        options?: SendControlOptions<TPayload>,
+      ) => client.sendControl(controlData, options),
+      [client],
+    );
+
+    const setWarmupPayloadProvider = useCallback(
+      (provider: (() => TPayload | null) | null) =>
+        client.setWarmupPayloadProvider(provider),
       [client],
     );
 
@@ -96,6 +105,7 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
       warmup,
       send,
       sendControl,
+      setWarmupPayloadProvider,
       abort,
       isLoading,
       error,

@@ -32,6 +32,12 @@ export type WarmupOptions = {
   onServerAction?: (type: string, data: unknown) => void;
 };
 
+/** Options for side-channel control messages */
+export type SendControlOptions<TPayload = unknown> = {
+  /** When last warmup is missing, use this payload and warm before control */
+  warmupPayload?: TPayload;
+};
+
 export type StartStreamOptions<TResponse extends Record<string, unknown>> = {
   /** Optional: Use a custom message handler. If omitted, it uses the Standard AI Protocol handler. */
   onMessage?: (
