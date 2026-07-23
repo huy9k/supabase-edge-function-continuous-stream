@@ -346,25 +346,40 @@ export function createEdgeStreamClient(deps: EdgeStreamCoreDeps): CreateClient {
       let resolved = false;
 
       return new Promise<TResponse>((resolvePromise, rejectPromise) => {
-        const overallTimeout = setTimeout(() => {
-          if (!resolved) {
-            const err = new Error("WebSocket request timeout");
-            const entry = concurrent
-              ? requestId
-                ? pendingRequestsRef.current.get(requestId)
-                : undefined
-              : activeRequestRef.current;
-            if (entry) clearTrackedRequest(entry);
-            else {
-              pendingCountRef.current = Math.max(
-                0,
-                pendingCountRef.current - 1,
-              );
-              syncPendingCount();
-            }
-            rejectPromise(err);
+        // `overallTimeoutMs` is a SILENCE window, not a hard deadline — a
+        // turn that keeps streaming/checkpointing across many worker
+        // rotations (long generations routinely outlive one edge worker's
+        // TTL) must not be killed just because it has been open a while.
+        // Every inbound message pushes the deadline back out via
+        // ctx.resetOverallTimeout(); only true silence for the full window
+        // gives up.
+        let overallTimeout: ReturnType<typeof setTimeout> | undefined;
+        const onOverallTimeout = () => {
+          if (resolved) return;
+          const err = new Error("WebSocket request timeout");
+          const entry = concurrent
+            ? requestId
+              ? pendingRequestsRef.current.get(requestId)
+              : undefined
+            : activeRequestRef.current;
+          if (entry) clearTrackedRequest(entry);
+          else {
+            pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
+            syncPendingCount();
           }
-        }, overallTimeoutMs);
+          rejectPromise(err);
+        };
+        const scheduleOverallTimeout = () => {
+          clearTimeout(overallTimeout);
+          overallTimeout = setTimeout(onOverallTimeout, overallTimeoutMs);
+          const entry = concurrent
+            ? requestId
+              ? pendingRequestsRef.current.get(requestId)
+              : undefined
+            : activeRequestRef.current;
+          if (entry) entry.overallTimeout = overallTimeout ?? null;
+        };
+        scheduleOverallTimeout();
 
         const ctx: EdgeFunctionMessageContext<TResponse> = {
           resolve: (value) => {
@@ -425,6 +440,10 @@ export function createEdgeStreamClient(deps: EdgeStreamCoreDeps): CreateClient {
               : activeRequestRef.current;
             if (entry) entry.overallTimeout = null;
           },
+          resetOverallTimeout: () => {
+            if (resolved) return;
+            scheduleOverallTimeout();
+          },
           isResolved: () => resolved,
         };
 
@@ -442,7 +461,7 @@ export function createEdgeStreamClient(deps: EdgeStreamCoreDeps): CreateClient {
           ctx,
           resolve: resolvePromise,
           reject: rejectPromise,
-          overallTimeout,
+          overallTimeout: overallTimeout ?? null,
           handler,
         };
 

@@ -15,6 +15,7 @@ function stubPending(
     reject: () => {},
     closeSocket: () => {},
     clearOverallTimeout: () => {},
+    resetOverallTimeout: () => {},
     isResolved: () => false,
   };
   return {

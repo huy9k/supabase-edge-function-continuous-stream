@@ -13,6 +13,8 @@ export interface EdgeFunctionMessageContext<
   reject: (reason: Error) => void;
   closeSocket: () => void;
   clearOverallTimeout: () => void;
+  /** Pushes the overall silence deadline back out — call on any progress */
+  resetOverallTimeout: () => void;
   isResolved: () => boolean;
 }
 

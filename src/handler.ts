@@ -24,6 +24,13 @@ export function createStandardAiMessageHandler<
     message: EdgeFunctionRawMessage,
     ctx: EdgeFunctionMessageContext<T>,
   ) => {
+    // Any inbound message is proof the turn is alive — long generations
+    // routinely span several worker rotations, so silence (not elapsed
+    // time) is what should ever time this request out.
+    if (message.type !== "complete" && message.type !== "error") {
+      ctx.resetOverallTimeout();
+    }
+
     if (message.type === "response_text" && typeof message.data === "string") {
       (state as { reply?: string }).reply = message.data;
     }

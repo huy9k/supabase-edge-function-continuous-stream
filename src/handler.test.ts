@@ -18,6 +18,7 @@ function makeCtx<T extends Record<string, unknown>>(): {
     },
     closeSocket: () => {},
     clearOverallTimeout: () => {},
+    resetOverallTimeout: () => {},
     isResolved: () => resolved !== null || rejected !== null,
   };
   return {
