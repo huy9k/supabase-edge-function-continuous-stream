@@ -77,6 +77,8 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
       setIsLoading(false);
     }, [client]);
 
+    const reconnect = useCallback(() => client.reconnect(), [client]);
+
     const send = useCallback(
       async (
         payload: TPayload,
@@ -89,8 +91,7 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
           setData(result);
           return result;
         } catch (err: unknown) {
-          const next =
-            err instanceof Error ? err : new Error(String(err));
+          const next = err instanceof Error ? err : new Error(String(err));
           setError(next);
           throw next;
         }
@@ -106,6 +107,7 @@ export function createUseEdgeStream(deps: EdgeStreamCoreDeps) {
       send,
       sendControl,
       setWarmupPayloadProvider,
+      reconnect,
       abort,
       isLoading,
       error,

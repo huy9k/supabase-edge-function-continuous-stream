@@ -51,9 +51,9 @@ export type EdgeStreamClient<
     options?: SendControlOptions<TPayload>,
   ) => Promise<void>;
   /** Registers a fallback warmup payload resolver for sendControl auto-warm */
-  setWarmupPayloadProvider: (
-    provider: (() => TPayload | null) | null,
-  ) => void;
+  setWarmupPayloadProvider: (provider: (() => TPayload | null) | null) => void;
+  /** Force-closes and reopens the socket for mid-turn worker reclaim */
+  reconnect: () => Promise<void>;
   abort: () => void;
   getConnectionState: () => ConnectionState;
   subscribeConnectionState: (
@@ -64,10 +64,7 @@ export type EdgeStreamClient<
   dispose: () => void;
 };
 
-type CreateClient = <
-  TPayload,
-  TResponse extends Record<string, unknown>,
->(
+type CreateClient = <TPayload, TResponse extends Record<string, unknown>>(
   config: EdgeStreamConfig,
 ) => EdgeStreamClient<TPayload, TResponse>;
 
@@ -237,6 +234,12 @@ export function createEdgeStreamClient(deps: EdgeStreamCoreDeps): CreateClient {
       if (!expiresAt) return;
       if (expiresAt - Date.now() >= edgeRotateThresholdMs) return;
 
+      await reconnect();
+    }
+
+    /** Force-closes and reopens the socket (mid-turn edge reclaim) */
+    async function reconnect() {
+      if (disposed) return;
       isExplicitDisconnectRef.current = false;
       closeSocket();
       isWarmupReadyRef.current = false;
@@ -539,6 +542,7 @@ export function createEdgeStreamClient(deps: EdgeStreamCoreDeps): CreateClient {
       send,
       sendControl,
       setWarmupPayloadProvider,
+      reconnect,
       abort,
       getConnectionState: () => connectionState,
       subscribeConnectionState: (listener) => {
