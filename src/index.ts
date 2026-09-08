@@ -11,6 +11,7 @@ export type {
 } from "./types";
 
 export {
+  ACTIVE_RECONNECT_DELAY_MS,
   CONNECTION_TIMEOUT_MS,
   INITIAL_RETRY_DELAY_MS,
   MAX_RETRIES,

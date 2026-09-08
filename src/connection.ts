@@ -1,4 +1,5 @@
 import {
+  ACTIVE_RECONNECT_DELAY_MS,
   CONNECTION_TIMEOUT_MS,
   INITIAL_RETRY_DELAY_MS,
   MAX_RETRIES,
@@ -219,8 +220,15 @@ export async function connectEdgeSocket<
           rejectConnection(new Error("WebSocket closed by server or aborted"));
         } else if (retryCountRef.current < MAX_RETRIES) {
           retryCountRef.current++;
-          const delay =
-            INITIAL_RETRY_DELAY_MS * Math.pow(2, retryCountRef.current - 1);
+          // Reclaim fast while an in-flight turn is still expecting the resumed
+          // stream (the request survives reconnects); only idle/warmup sockets
+          // fall back to the gentle exponential backoff.
+          const hasInFlightRequest = concurrent
+            ? pendingRequestsRef.current.size > 0
+            : activeRequestRef.current !== null;
+          const delay = hasInFlightRequest
+            ? ACTIVE_RECONNECT_DELAY_MS
+            : INITIAL_RETRY_DELAY_MS * Math.pow(2, retryCountRef.current - 1);
           setTimeout(retryConnect, delay);
         } else {
           rejectConnection(
